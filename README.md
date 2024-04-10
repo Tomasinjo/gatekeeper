@@ -113,4 +113,4 @@ services:
 
 On your phone, use mobile network to connect to your trusted service. Then check out new contents of dynamic-whitelist.yml. Your phone's IP should be there and you should be able to access your other services.
 
-Troubleshoot the gatekeeper using: `docker logs gatekeeper`
+Troubleshoot the gatekeeper using: `docker logs gatekeeper` 
