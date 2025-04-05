@@ -26,6 +26,14 @@ def save_whitelist(approved_ips=[]):
     with open('dynamic-whitelist.yml', 'w') as f:
         yaml.dump(whitelist, f)
 
+def is_valid_ip(address):
+    try:
+        ip_address(address)
+        return True
+    except ValueError:
+        return False
+
+
 class Persistent:
     def __init__(self):
         self.approved_ips = []
@@ -39,6 +47,10 @@ save_whitelist()
 def catch_all(path):
     resp = 'OK'
     source_ip = request.headers.get('X-Forwarded-For')
+    if not is_valid_ip(address=source_ip):
+        return resp
+    if '%' in source_ip:
+        return resp 
     # prevent whitelisting IPs that are defined in default network ranges
     if len([net for net in DEFAULT_SOURCE_RANGE if ip_address(source_ip) in ip_network(net)]) > 0:
         return resp 
