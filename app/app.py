@@ -41,6 +41,8 @@ class Persistent:
     def __init__(self):
         self.approved_ips = []
 
+p = Persistent()
+save_whitelist()
 
 def is_share_link_valid(url: str) -> bool:
    status_code = requests.get(url).status_code
@@ -91,6 +93,4 @@ def catch_all(path):
 
 
 if __name__ == "__main__":
-    p = Persistent()
-    save_whitelist()
     app.run(host='0.0.0.0')
