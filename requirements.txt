@@ -1,3 +1,4 @@
 flask==3.0.2
 pyyaml
 uwsgi
+requests
