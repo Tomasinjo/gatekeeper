@@ -13,6 +13,8 @@ I find this approach a great balance between security and usability, however it 
 # How it works
 Traefik is set up to mirror all requests destined to selected service also to another destination - the gatekeeper. Traefik will only mirror client requests after the client certificate was verified. The app will catch all requests of trusted client and whitelist its public IP address. This client can now access all other services. Number of whitelisted IPs is limited, oldest will be removed if the limit is hit.
 
+** **Update 11.2025: Shared links (tested on Immich and Nextcloud) are now supported. See [here](#allow-ip-using-shared-links)**
+
 # Prerequesites
 - Have at least one service that allows you to authenticate using client certificate from your phone and periodically talks to it in the background. Home Assistant is perfect because it is updating sensors every 15 minutes (or even 1 minute if set so). This ensures the whitelist is always up to date.
 - Traefik, because it supports dynamic loading of configuration changes.
@@ -114,3 +116,74 @@ services:
 On your phone, use mobile network to connect to your trusted service. Then check out new contents of dynamic-whitelist.yml. Your phone's IP should be there and you should be able to access your other services.
 
 Troubleshoot the gatekeeper using: `docker logs gatekeeper` 
+
+
+## Allow IP using shared links
+
+While gatekeeper works great for small amount of users, you might still want certain people to access files shared via Immich or Nextcloud. The following configuration will whitelist IP of device that opens a shared link. The examples are for Immich and Nextcloud, but should work with any other service that generates a random unique URI for shares and returns non-200 response (e.g. 404) if link doesn't exist.
+
+### How it works
+When your friend opens a shared URL with some immich photos, the request will be matched and forwarded to gatekeeper via [forwardauth middleware](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/forwardauth/). This middleware pauses the your friend's request and waits for gatekeeper to verify validity of the shared link. If it is valid (immich server responds with HTTP code 200), your friend's IP is whitelisted and the URL with photos will load. 
+
+
+### Example for Immich and Nextcloud
+
+#### 1. Add Traefik labels to gatekeeper to enable separate forwardauth middleware for both Immich and Nextcloud. 
+```yml
+  gatekeeper:
+    .
+    . < omitted for clarity, see compose example from above>
+    .
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.middlewares.gatekeeper_immich_share.forwardauth.address=http://gatekeeper:5000/verify_share_request?protocol=http&container_name_port=immich_server:2283"
+      - "traefik.http.middlewares.gatekeeper_immich_share.forwardauth.trustForwardHeader=true"
+
+      - "traefik.http.middlewares.gatekeeper_nextcloud_share.forwardauth.address=http://gatekeeper:5000/verify_share_request?protocol=http&container_name_port=nextcloud-app:80"
+      - "traefik.http.middlewares.gatekeeper_nextcloud_share.forwardauth.trustForwardHeader=true"
+```
+
+**Explaination**  
+traefik.http.middlewares.**MIDDLEWARE_NAME**.forwardauth.address=http://gatekeeper:5000/verify_share_request?protocol=**PROTOCOL**&container_name_port=**CONTAINER_NAME_AND_PORT**
+
+MIDDLEWARE_NAME: Just a middleware name, will be refered later in specific service  
+PROTOCOL: http or https. Used by container, not reverse proxy!  
+CONTAINER_NAME_AND_PORT: Used by container, not reverse proxy! See examples above for immich and nextcloud. Your containers might not use the same name.
+______
+  
+#### 2. Modify Immich and Nextcloud to forward share requests to gatekeeper using forwardauth
+
+Add the following labels to Immich compose (but keep the ones added during the [installation step](#installation)!):
+```yml
+- traefik.http.routers.immich-share.rule=Host(`immich.domain.com`) && PathRegexp(`^\/share\/(?:[A-Z,a-z,0-9,_,-]){67}$`)
+- traefik.http.routers.immich-share.entrypoints=https,http
+- traefik.http.routers.immich-share.tls=true
+- traefik.http.routers.immich-share.tls.certresolver=your_resolver
+- traefik.http.routers.immich-share.middlewares=gatekeeper_immich_share@docker
+```
+This tells Traefik to match reqests to shared links and forward them to gatekeeper before allowing user to access them. Notice there is no whitelist restrictions, anyone can access a URL that matches regex.
+
+Example immich share link. Regex at first line above matches this pattern (67 characters, mixed alphanumeric including _ and -):  
+```immich.domain.com/share/TEsm6bGu0tN5o1PjeVHDY0vwIqIfNDVPbVSzyfgI_jif2h0r8_GogiXmz8g3ziKYBh4```
+
+Last line refers to middleware name defined in gatekeeper's labels. Other lines configure TLS and can be copied from existing labels.
+  
+_____________  
+Nexcloud labels, regex is different and of course the middleware name:
+```yml
+- traefik.http.routers.nextcloud-share.rule=Host(`nextcloud.yourdomain.com`) && PathRegexp(`^\/s\/(?:[A-Z,a-z,0-9]){15}$`)
+- traefik.http.routers.nextcloud-share.entrypoints=https,http
+- traefik.http.routers.nextcloud-share.tls=true
+- traefik.http.routers.nextcloud-share.tls.certresolver=your_resolver
+- traefik.http.routers.nextcloud-share.middlewares=gatekeeper_nextcloud_share@docker
+```
+
+#### 3. Bring up your stacks to apply new labels
+
+
+### Security
+When someone access a valid shared link, they will be granted access also to any other exposed service because their IP is added to the whitelist. I might consider adding dedicated whitelists for the specific services. However, since I typically share stuff with people I trust, I don't see it as a huge risk (keep in mind they would still need password + 2FA to actually access anything).
+
+Another thing to consider is bruteforcing shared links. If someone would guess a valid shared link, the gatekeeper will whitelist them and give them the connectivity to your services. Immich has long shared links, but Nextcloud, for example, has only 15 characters. Still OK, especially because Nextcloud will throttle aggressive requests. 
+
+Easy way of reducing chances of successful bruteforce is to limit validity of shared links to short periods.
